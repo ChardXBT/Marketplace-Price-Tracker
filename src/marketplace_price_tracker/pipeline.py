@@ -25,7 +25,7 @@ class Opportunity:
 
 
 class PriceTracker:
-    """Safe reference pipeline with synthetic inputs and no live integrations."""
+    """Auto Buyer demo with fake inputs and no live connections."""
 
     def normalize(self, listings: list[Listing]) -> list[Listing]:
         unique: dict[tuple[str, str], Listing] = {}

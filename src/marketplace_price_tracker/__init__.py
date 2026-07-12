@@ -1,4 +1,4 @@
-"""Synthetic cross-market tracking and order-planning demonstration."""
+"""Public demo of an Auto Buyer and Bargain Buy-Order Bot."""
 
 from .pipeline import Listing, Opportunity, PriceTracker, demo_tracker
 from .bidder import BargainBidPlanner, BidDecision

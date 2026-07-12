@@ -1,187 +1,149 @@
 # Marketplace Price Tracker
 
-Marketplace Price Tracker is a public, synthetic reference implementation of
-two related automation systems:
+This repo shows two marketplace bots I built for buying items on CS
+marketplaces:
 
-1. a cross-market scanner and auto-bid planner that compares current listings;
-2. a bargain buy-order analyzer that evaluates order-book support before
-   preparing a bid intent.
+1. **Auto Buyer:** watches live listings and buys an item only when its price,
+   identity, and safety checks all pass.
+2. **Bargain Buy-Order Bot:** looks for items where a lower offer may work,
+   checks the strength of the market, and manages buy orders without sending
+   the same offer twice.
 
-The production projects that inspired it operate across CS marketplaces. This
-repository exposes the engineering architecture—normalization, identity
-verification, market-shape analysis, duplicate prevention, and fail-closed
-decisions—without including credentials, live adapters, private strategy
-settings, or executable transaction code.
+The public version uses fake items and prices. It shows how the decisions work,
+but it has no account login, private settings, or live purchase connection.
 
-## System overview
+## How the two bots fit together
 
-```text
-                           shared normalized item identity
-                                         │
-                  ┌──────────────────────┴──────────────────────┐
-                  │                                             │
-                  v                                             v
-      cross-market scanner / auto bidder             bargain buy-order analyzer
-      ──────────────────────────────────             ──────────────────────────
-      listing ingestion                              order-book depth
-      exact identity validation                      demand/support calculation
-      reference-price comparison                     concentration / pump check
-      opportunity confidence                         pending-order reconciliation
-      duplicate action guard                         safe bid-intent planning
-                  │                                             │
-                  └──────────────────────┬──────────────────────┘
-                                         v
-                         non-executable decisions + audit trail
+```mermaid
+flowchart TD
+    A["Marketplace buying tools"] --> B["Auto Buyer"]
+    A --> C["Bargain Buy-Order Bot"]
+    B --> D["Watch current listings"]
+    B --> E["Buy a listed item when every check passes"]
+    C --> F["Review market demand and existing offers"]
+    C --> G["Place or update a lower buy order when it is safe"]
+    D --> H["Saved decision record"]
+    E --> H
+    F --> H
+    G --> H
 ```
 
-Both paths use deterministic synthetic data. The public implementation ends at
-an intent object and has no browser login, marketplace API key, account state,
-or purchase endpoint.
+The bots solve different problems. The Auto Buyer reacts to an item that is
+already listed for sale. The Bargain Buy-Order Bot tries to get a better price
+by making and managing offers.
 
-## 1. Cross-market scanner and auto bidder
+## 1. Auto Buyer
 
-The scanner turns inconsistent listings from several abstract CS marketplace
-sources into a single typed model. The auto-bid planner then determines whether
-a signal is clear enough to become a non-executable intent.
+The Auto Buyer reads current listings, matches each listing to the exact item,
+compares the price with a trusted reference, and rejects anything that is
+unclear. A qualifying listing still passes duplicate and last-second safety
+checks before the bot can treat it as ready.
 
-### Pipeline
+### Auto Buyer flow
 
-```text
-source records
-   -> schema validation
-   -> identity normalization
-   -> source/item deduplication
-   -> reference comparison
-   -> liquidity confidence
-   -> ranked opportunity
-   -> duplicate-safe simulated intent
+```mermaid
+flowchart TD
+    A["Run starts"] --> B["Read current listings"]
+    B --> C["Match the exact item and variant"]
+    C --> D{"Identity verified?"}
+    D -->|No| E["Skip and record the reason"]
+    D -->|Yes| F["Compare listing price with reference data"]
+    F --> G{"Price and confidence checks pass?"}
+    G -->|No| E
+    G -->|Yes| H["Check for duplicate or uncertain prior action"]
+    H --> I{"Safe to continue?"}
+    I -->|No| J["Hold for review"]
+    I -->|Yes| K["Recheck the listing"]
+    K --> L["Create a simulated purchase result"]
+    E --> M["Save decision record"]
+    J --> M
+    L --> M
 ```
 
-### Important behaviors
+### Main checks
 
-| Stage | Engineering behavior |
+| Check | Purpose |
 | --- | --- |
-| Ingestion | Accepts immutable records from interchangeable source adapters |
-| Identity | Requires a verified normalized item before price analysis |
-| Deduplication | Keeps one deterministic best observation per item/source key |
-| Comparison | Computes a normalized signal against a synthetic reference value |
-| Confidence | Separates strong signals from results that still need review |
-| Planning | Produces at most one intent for a normalized item in one pass |
-| Execution boundary | Stops before any live marketplace or browser adapter |
+| Item identity | Stops two similar item variants from being compared as if they were the same |
+| Price comparison | Measures whether the current listing is actually below its reference value |
+| Confidence | Keeps weak or incomplete results in review instead of calling them ready |
+| Duplicate protection | Allows only one result for the same item during a pass |
+| Final recheck | Makes sure the listing has not changed before the action boundary |
+| Public safety boundary | Produces a simulated result and never contacts a purchase endpoint |
 
-### Why identity comes first
+The order of these checks matters. A large discount is not useful if the item
+match is uncertain. The bot verifies the item first and fails safely when it
+cannot prove what it is looking at.
 
-A price difference is meaningless if two records refer to different variants.
-The tracker therefore fails closed on uncertain identity instead of allowing a
-large apparent discount to override missing evidence. This ordering also makes
-the ranking explainable: each accepted row has a known item, source, observed
-value, reference value, and confidence state.
+## 2. Bargain Buy-Order Bot
 
-## 2. Bargain buy-order analyzer
+The Bargain Buy-Order Bot looks for items where a seller may accept an offer
+below the listed price. Before it prepares an offer, it checks existing and
+pending orders, visible demand, the spread of that demand, and signs that the
+market may be temporarily pumped.
 
-The buy-order side models the harder question: a low apparent price can be
-unsafe when demand is shallow or concentrated in one artificial-looking
-cluster. Before planning a bid, the system evaluates the shape of synthetic
-order-book depth.
+### Bargain Buy-Order Bot flow
 
-### Market-shape inputs
+```mermaid
+flowchart TD
+    A["Run starts"] --> B["Load tracked items and pending offers"]
+    B --> C["Read the current item and order-book data"]
+    C --> D{"Inputs complete and current?"}
+    D -->|No| E["Preserve prior state and wait"]
+    D -->|Yes| F["Measure support, concentration, and breadth"]
+    F --> G["Calculate pump-risk score"]
+    G --> H{"Market support looks safe?"}
+    H -->|No| I["Hold the item"]
+    H -->|Yes| J{"Equivalent offer already pending?"}
+    J -->|Yes| K["Reconcile the existing offer"]
+    J -->|No| L["Prepare a simulated bargain offer"]
+    E --> M["Save decision record"]
+    I --> M
+    K --> M
+    L --> M
+```
 
-Each order-book level contains two normalized values:
+### Pump check
 
-- **relative distance** from the current reference region;
-- **visible volume** at that level.
+One large order level can make demand look stronger than it really is. The
+public demo measures three parts of the visible order book:
 
-From these levels the analyzer derives:
+- `support_share`: how much visible demand is close to the reference area;
+- `concentration`: how much demand comes from the single largest level;
+- `breadth`: how widely demand is spread across the visible levels.
 
-- `support_share` — the fraction of visible depth close to the reference;
-- `concentration` — the fraction controlled by the single largest level;
-- `breadth` — how much of the expected depth range is populated;
-- `pump_score` — a combined risk signal from concentrated, unsupported, or
-  unusually narrow depth.
-
-### Illustrative pump-check calculation
-
-The public demo uses a normalized educational formula:
+It combines them into a simple example score:
 
 ```text
 pump_score =
-    0.50 × concentration
-  + 0.35 × (1 - support_share)
-  + 0.15 × (1 - breadth)
+    0.50 x concentration
+  + 0.35 x (1 - support_share)
+  + 0.15 x (1 - breadth)
 ```
 
-This formula demonstrates the architecture, not private production tuning.
-There are no real thresholds, target prices, item identifiers, or strategy
-limits in this repository.
+This formula is only here to show the design. The repo does not include real
+targets, private thresholds, item IDs, or production pricing rules.
 
-### Decision sequence
+### Offer safety
 
-```text
-verified opportunity
-        │
-        v
-order-book available? ── no ──> HOLD
-        │ yes
-        v
-pump risk elevated? ──── yes ─> HOLD
-        │ no
-        v
-confidence high? ──────── no ──> REVIEW
-        │ yes
-        v
-SIMULATE_BID_INTENT (never executable)
-```
+- Existing and pending offers are checked before another offer is considered.
+- An unknown offer result stays uncertain instead of being sent again.
+- A seller counter-offer is kept separate from a new item opportunity.
+- Weak or concentrated demand causes a hold.
+- A safe result still stops at a simulated offer in this public repo.
 
-### Production concepts represented safely
+## Shared rules
 
-The public planner mirrors the boundaries of a more complete system:
-
-- reconcile existing and pending orders before proposing another action;
-- preserve uncertain in-flight state rather than resubmitting;
-- distinguish a seller counter-offer from a new independent opportunity;
-- compare visible support with short-term price movement;
-- avoid a bid when one depth level dominates the apparent demand;
-- require a fresh identity and market-state check before any execution adapter.
-
-No real order submission or marketplace-specific request logic is included.
-
-## Shared reliability invariants
-
-| Invariant | Result |
+| Rule | Result |
 | --- | --- |
-| Invalid values fail closed | Missing or non-positive observations are excluded |
-| Unverified identity cannot advance | Price alone never overrides item ambiguity |
-| One item produces one intent | Duplicate candidates cannot multiply actions |
-| Uncertain outcomes are preserved | The planner does not assume success or failure |
-| Concentrated depth blocks automation | Pump-like structure is surfaced as `HOLD` |
-| Review remains distinct from approval | Lower-confidence signals stay human-visible |
-| Public intents are never executable | The transaction boundary is absent by design |
+| Invalid values are rejected | Missing or non-positive prices cannot move forward |
+| Identity must be verified | Price never overrides an unclear item match |
+| One item gets one action | Duplicate candidates cannot create repeated purchase or offer results |
+| Unknown outcomes stay unknown | The bots do not guess that an action failed and retry it |
+| Pump-like demand is blocked | Concentrated demand is held for review |
+| Public output cannot execute | Every purchase and offer result is simulated |
 
-## Data model
-
-The reference implementation uses small immutable objects:
-
-```text
-Listing
-  item, source, observed value, reference value, liquidity, identity proof
-
-Opportunity
-  item, source, comparison signal, confidence
-
-OrderBookLevel
-  relative distance, visible volume
-
-MarketShape
-  support share, concentration, breadth, pump score, elevated flag
-
-BidDecision
-  item, action, reason, executable=false
-```
-
-Keeping collection records separate from decisions makes the pipeline easier
-to test, audit, and extend with additional adapters.
-
-## Run the synthetic demonstration
+## Run the demo
 
 ```bash
 git clone <repository-url>
@@ -189,27 +151,19 @@ cd Marketplace-Price-Tracker
 python demo.py --dry-run
 ```
 
-The report shows both sections: ranked cross-market signals and a separate
-buy-order market-shape decision. Every value is synthetic.
+The command prints results for both bots using fake listings and order-book
+data. It does not open a browser or connect to a marketplace.
 
-## Tests
+## Run the tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The suite verifies:
-
-- deterministic deduplication;
-- unverified identity rejection;
-- duplicate-intent blocking;
-- fail-closed handling of invalid values and missing depth;
-- review-only treatment of weaker signals;
-- higher pump risk for concentrated versus distributed depth;
-- bid holds when market shape is elevated;
-- non-executable output for every decision path.
-
-GitHub Actions runs the tests and dry-run report on every push and pull request.
+The tests cover item matching, duplicate blocking, invalid data, lower
+confidence results, pump-risk calculation, missing order-book data, and the
+non-executable output boundary. GitHub Actions runs the same tests and demo on
+every push and pull request.
 
 ## Repository layout
 
@@ -217,20 +171,19 @@ GitHub Actions runs the tests and dry-run report on every push and pull request.
 .
 ├── docs/architecture.md
 ├── src/marketplace_price_tracker/
-│   ├── pipeline.py       # Ingestion, normalization, comparison, ranking
-│   ├── market_shape.py   # Support, concentration, breadth, pump analysis
-│   ├── bidder.py         # Fail-closed non-executable bid decisions
-│   └── cli.py            # Combined synthetic report
+│   ├── pipeline.py       # Auto Buyer listing checks and ranking
+│   ├── market_shape.py   # Buy-order support and pump checks
+│   ├── bidder.py         # Bargain Buy-Order Bot decisions
+│   └── cli.py            # Combined fake-data report
 ├── tests/
 ├── demo.py
 └── pyproject.toml
 ```
 
-## Public boundary
+## Public version
 
-All item names, sources, prices, depth, and decisions are synthetic. The
-repository contains no account details, browser profiles, marketplace-specific
-identifiers, private strategy configuration, notification endpoints, or live
-transaction capability.
+All item names, sources, prices, order-book levels, and decisions are fake.
+This repo contains no credentials, browser profiles, private marketplace IDs,
+strategy limits, notification links, or live transaction code.
 
-See [the architecture notes](docs/architecture.md) for a compact component map.
+See [the architecture notes](docs/architecture.md) for the module map.

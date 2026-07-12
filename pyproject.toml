@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "marketplace-price-tracker"
 version = "1.0.0"
-description = "A synthetic demonstration of cross-market price tracking and safe order planning."
+description = "A public demo of an Auto Buyer and Bargain Buy-Order Bot."
 requires-python = ">=3.11"
 
 [project.scripts]

@@ -1,117 +1,236 @@
 # Marketplace Price Tracker
 
-> A synthetic demonstration of how software can compare listings across CS
-> marketplaces, identify pricing gaps, and prepare safe, non-executable order
-> intents.
+Marketplace Price Tracker is a public, synthetic reference implementation of
+two related automation systems:
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
-![Mode](https://img.shields.io/badge/data-synthetic-06b6d4)
-![Execution](https://img.shields.io/badge/orders-non--executable-8b5cf6)
-![License](https://img.shields.io/badge/license-MIT-blue)
+1. a cross-market scanner and auto-bid planner that compares current listings;
+2. a bargain buy-order analyzer that evaluates order-book support before
+   preparing a bid intent.
 
-Marketplace data is messy: the same item can appear under different sources,
-duplicate records can arrive in one scan, and a cheap listing is not useful if
-its identity cannot be verified. This project turns that problem into a small,
-auditable pipeline.
+The production projects that inspired it operate across CS marketplaces. This
+repository exposes the engineering architecture—normalization, identity
+verification, market-shape analysis, duplicate prevention, and fail-closed
+decisions—without including credentials, live adapters, private strategy
+settings, or executable transaction code.
 
-It combines the public engineering ideas behind two private automation
-projects—continuous market monitoring and bargain buy-order planning—without
-including live integrations, private strategy, credentials, or operational
-configuration.
+## System overview
 
-## Dry-run tracker
+```text
+                           shared normalized item identity
+                                         │
+                  ┌──────────────────────┴──────────────────────┐
+                  │                                             │
+                  v                                             v
+      cross-market scanner / auto bidder             bargain buy-order analyzer
+      ──────────────────────────────────             ──────────────────────────
+      listing ingestion                              order-book depth
+      exact identity validation                      demand/support calculation
+      reference-price comparison                     concentration / pump check
+      opportunity confidence                         pending-order reconciliation
+      duplicate action guard                         safe bid-intent planning
+                  │                                             │
+                  └──────────────────────┬──────────────────────┘
+                                         v
+                         non-executable decisions + audit trail
+```
 
-The screenshot is generated from a deterministic synthetic run. Before it is
-written, an automatic sanitizer masks account-like text, local user paths,
-token-shaped values, and long identifiers.
+Both paths use deterministic synthetic data. The public implementation ends at
+an intent object and has no browser login, marketplace API key, account state,
+or purchase endpoint.
 
-![Marketplace Price Tracker dry-run](assets/dry-run-tracker.png)
+## 1. Cross-market scanner and auto bidder
 
-## What it demonstrates
+The scanner turns inconsistent listings from several abstract CS marketplace
+sources into a single typed model. The auto-bid planner then determines whether
+a signal is clear enough to become a non-executable intent.
 
-1. **Ingest** listings from multiple abstract CS marketplace sources.
-2. **Normalize** them into one typed internal record.
-3. **Deduplicate** equivalent source/item observations deterministically.
-4. **Verify identity** before a listing can enter analysis.
-5. **Compare** the observed price with a synthetic reference value.
-6. **Rank** positive signals while retaining uncertainty for human review.
-7. **Plan** at most one non-executable intent per item.
+### Pipeline
 
-The result is understandable to an operator and inspectable by an engineer:
-every row has a source, comparison, confidence level, and clear disposition.
+```text
+source records
+   -> schema validation
+   -> identity normalization
+   -> source/item deduplication
+   -> reference comparison
+   -> liquidity confidence
+   -> ranked opportunity
+   -> duplicate-safe simulated intent
+```
 
-## Engineering highlights
+### Important behaviors
 
-| Concern | Public implementation |
+| Stage | Engineering behavior |
 | --- | --- |
-| Cross-source data | Immutable typed records and one normalized model |
-| Duplicate listings | Stable identity key and deterministic best-record selection |
-| Bad or missing values | Fail-closed validation before analysis |
-| Uncertain signals | Visible as `review`, never promoted automatically |
-| Repeated actions | One intent per normalized item identity |
-| Live execution risk | No credentials, adapters, browser control, or order endpoint |
-| Reproducibility | Synthetic fixtures, deterministic ordering, unit tests |
+| Ingestion | Accepts immutable records from interchangeable source adapters |
+| Identity | Requires a verified normalized item before price analysis |
+| Deduplication | Keeps one deterministic best observation per item/source key |
+| Comparison | Computes a normalized signal against a synthetic reference value |
+| Confidence | Separates strong signals from results that still need review |
+| Planning | Produces at most one intent for a normalized item in one pass |
+| Execution boundary | Stops before any live marketplace or browser adapter |
 
-## Quick start
+### Why identity comes first
+
+A price difference is meaningless if two records refer to different variants.
+The tracker therefore fails closed on uncertain identity instead of allowing a
+large apparent discount to override missing evidence. This ordering also makes
+the ranking explainable: each accepted row has a known item, source, observed
+value, reference value, and confidence state.
+
+## 2. Bargain buy-order analyzer
+
+The buy-order side models the harder question: a low apparent price can be
+unsafe when demand is shallow or concentrated in one artificial-looking
+cluster. Before planning a bid, the system evaluates the shape of synthetic
+order-book depth.
+
+### Market-shape inputs
+
+Each order-book level contains two normalized values:
+
+- **relative distance** from the current reference region;
+- **visible volume** at that level.
+
+From these levels the analyzer derives:
+
+- `support_share` — the fraction of visible depth close to the reference;
+- `concentration` — the fraction controlled by the single largest level;
+- `breadth` — how much of the expected depth range is populated;
+- `pump_score` — a combined risk signal from concentrated, unsupported, or
+  unusually narrow depth.
+
+### Illustrative pump-check calculation
+
+The public demo uses a normalized educational formula:
+
+```text
+pump_score =
+    0.50 × concentration
+  + 0.35 × (1 - support_share)
+  + 0.15 × (1 - breadth)
+```
+
+This formula demonstrates the architecture, not private production tuning.
+There are no real thresholds, target prices, item identifiers, or strategy
+limits in this repository.
+
+### Decision sequence
+
+```text
+verified opportunity
+        │
+        v
+order-book available? ── no ──> HOLD
+        │ yes
+        v
+pump risk elevated? ──── yes ─> HOLD
+        │ no
+        v
+confidence high? ──────── no ──> REVIEW
+        │ yes
+        v
+SIMULATE_BID_INTENT (never executable)
+```
+
+### Production concepts represented safely
+
+The public planner mirrors the boundaries of a more complete system:
+
+- reconcile existing and pending orders before proposing another action;
+- preserve uncertain in-flight state rather than resubmitting;
+- distinguish a seller counter-offer from a new independent opportunity;
+- compare visible support with short-term price movement;
+- avoid a bid when one depth level dominates the apparent demand;
+- require a fresh identity and market-state check before any execution adapter.
+
+No real order submission or marketplace-specific request logic is included.
+
+## Shared reliability invariants
+
+| Invariant | Result |
+| --- | --- |
+| Invalid values fail closed | Missing or non-positive observations are excluded |
+| Unverified identity cannot advance | Price alone never overrides item ambiguity |
+| One item produces one intent | Duplicate candidates cannot multiply actions |
+| Uncertain outcomes are preserved | The planner does not assume success or failure |
+| Concentrated depth blocks automation | Pump-like structure is surfaced as `HOLD` |
+| Review remains distinct from approval | Lower-confidence signals stay human-visible |
+| Public intents are never executable | The transaction boundary is absent by design |
+
+## Data model
+
+The reference implementation uses small immutable objects:
+
+```text
+Listing
+  item, source, observed value, reference value, liquidity, identity proof
+
+Opportunity
+  item, source, comparison signal, confidence
+
+OrderBookLevel
+  relative distance, visible volume
+
+MarketShape
+  support share, concentration, breadth, pump score, elevated flag
+
+BidDecision
+  item, action, reason, executable=false
+```
+
+Keeping collection records separate from decisions makes the pipeline easier
+to test, audit, and extend with additional adapters.
+
+## Run the synthetic demonstration
 
 ```bash
 git clone <repository-url>
 cd Marketplace-Price-Tracker
 python demo.py --dry-run
+```
+
+The report shows both sections: ranked cross-market signals and a separate
+buy-order market-shape decision. Every value is synthetic.
+
+## Tests
+
+```bash
 python -m unittest discover -s tests -v
 ```
 
-Optional editable installation:
+The suite verifies:
 
-```bash
-python -m pip install -e .
-price-tracker-demo --dry-run
-```
+- deterministic deduplication;
+- unverified identity rejection;
+- duplicate-intent blocking;
+- fail-closed handling of invalid values and missing depth;
+- review-only treatment of weaker signals;
+- higher pump risk for concentrated versus distributed depth;
+- bid holds when market shape is elevated;
+- non-executable output for every decision path.
 
-## Pipeline
-
-```text
-synthetic sources
-       |
-       v
-normalize -> deduplicate -> verify identity -> compare -> rank
-                                                        |
-                                                        v
-                                         safe order-intent planner
-                                         (non-executable output)
-```
-
-The public planner deliberately stops before any transaction layer. It shows
-how duplicate protection and confidence gates can be designed without
-revealing or distributing a working marketplace buyer.
+GitHub Actions runs the tests and dry-run report on every push and pull request.
 
 ## Repository layout
 
 ```text
 .
-├── assets/                       # Sanitized dry-run screenshot
-├── docs/architecture.md          # Pipeline and safety boundaries
-├── scripts/                      # Reproducible asset generation
+├── docs/architecture.md
 ├── src/marketplace_price_tracker/
-│   ├── pipeline.py               # Normalization, analysis, and safe planning
-│   └── cli.py                    # Synthetic terminal report
-├── tests/                        # Identity, duplicate, and fail-closed tests
-├── demo.py                       # Zero-setup entry point
+│   ├── pipeline.py       # Ingestion, normalization, comparison, ranking
+│   ├── market_shape.py   # Support, concentration, breadth, pump analysis
+│   ├── bidder.py         # Fail-closed non-executable bid decisions
+│   └── cli.py            # Combined synthetic report
+├── tests/
+├── demo.py
 └── pyproject.toml
 ```
 
-## Safety and privacy
+## Public boundary
 
-All names and values in this repository are synthetic. There are no account
-details, browser profiles, private marketplace identifiers, strategy limits,
-credentials, notification endpoints, or live transaction code. The screenshot sanitizer is
-kept in the repository so the privacy step is reviewable and repeatable.
+All item names, sources, prices, depth, and decisions are synthetic. The
+repository contains no account details, browser profiles, marketplace-specific
+identifiers, private strategy configuration, notification endpoints, or live
+transaction capability.
 
-## Scope
-
-This is a portfolio-grade architectural demonstration, not a trading product.
-The private systems that inspired it include independent data collectors,
-long-running monitors, and additional verification. Their marketplace-specific
-logic and operational parameters are intentionally excluded.
-
-See [the architecture notes](docs/architecture.md) for the public design.
+See [the architecture notes](docs/architecture.md) for a compact component map.

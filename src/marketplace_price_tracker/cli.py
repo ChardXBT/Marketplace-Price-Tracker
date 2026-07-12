@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 
+from .bidder import BargainBidPlanner
+from .market_shape import MarketShapeAnalyzer, OrderBookLevel
 from .pipeline import demo_tracker
 
 
@@ -16,6 +19,7 @@ def render_demo() -> str:
         "=" * 76,
         f"Inputs: {len(listings)}   Normalized: {len(normalized)}   Opportunities: {len(opportunities)}",
         "",
+        "CROSS-MARKET SCANNER / AUTO BIDDER",
         "ITEM                          SOURCE              ASK      REFERENCE  SIGNAL   CONFIDENCE",
     ]
     for row in opportunities:
@@ -23,13 +27,28 @@ def render_demo() -> str:
             f"{row.item:<29} {row.source:<19} ${row.ask:>6}  ${row.reference:>8}  "
             f"{row.discount_percent:>5}%   {row.confidence}"
         )
-    lines.extend(["", "SAFE ORDER PLANNER"])
+    lines.extend(["", "SAFE AUTO-BID PLANNER"])
     for intent in intents:
         lines.append(
             f"  READY  {intent['item']}  -> {intent['action']}  (non-executable)"
         )
+    analyzer = MarketShapeAnalyzer()
+    shape = analyzer.analyze(
+        [
+            OrderBookLevel(Decimal("0.01"), Decimal("34")),
+            OrderBookLevel(Decimal("0.03"), Decimal("27")),
+            OrderBookLevel(Decimal("0.07"), Decimal("22")),
+            OrderBookLevel(Decimal("0.12"), Decimal("17")),
+        ]
+    )
+    bid = BargainBidPlanner().decide(opportunities[0], shape)
     lines.extend(
         [
+            "",
+            "BARGAIN BUY-ORDER ANALYZER",
+            f"  support={shape.support_share}  concentration={shape.concentration}  "
+            f"breadth={shape.breadth}  pump_score={shape.pump_score}",
+            f"  decision={bid.action}  executable={str(bid.executable).lower()}",
             "",
             "Safety gates: duplicate blocked | identity checked | uncertain listing skipped",
             "Result: synthetic analysis complete; no login, browser, API, or purchase used.",

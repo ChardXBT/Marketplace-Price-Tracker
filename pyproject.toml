@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marketplace-price-tracker"
+version = "1.0.0"
+description = "A synthetic demonstration of cross-market price tracking and safe order planning."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[project.scripts]
+price-tracker-demo = "marketplace_price_tracker.cli:main"
+
+[project.optional-dependencies]
+assets = ["Pillow>=10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
